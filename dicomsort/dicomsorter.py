@@ -8,14 +8,17 @@ from queue import Empty, Queue
 from threading import Thread
 
 from dicomsort import errors, utils
-from dicomsort.gui import events
-
 
 THREAD_COUNT = 2
 
 
 class Dicom:
-    def __init__(self, filename, dcm=None):
+    def __init__(
+            self,
+            *,
+            filename,
+            dcm=None
+    ):
         """
         Takes a dicom filename in and returns instance that can be used to sort
         """
@@ -112,7 +115,6 @@ class Dicom:
         return 'Image'
 
     def get_destination(self, root, directory_format, filename_format):
-
         # First we need to clean up the elements of directory_format to make
         # sure that we don't have any bad characters (including /) in the
         # folder names
@@ -138,49 +140,6 @@ class Dicom:
             out = os.path.join(directory, origname)
 
         return out
-
-    def set_anonymization_rules(self, anonymization_lookup):
-        # Appends the rules to the overrides so that we can alter them
-        if isinstance(anonymization_lookup, dict):
-            self.anonymization_lookup = anonymization_lookup
-        else:
-            raise Exception('Anon rules must be a dictionary')
-
-        if 'PatientBirthDate' in self.anonymization_lookup:
-            if self.anonymization_lookup['PatientBirthDate'] != '' or \
-                    self.dicom.PatientBirthDate == '':
-
-                self.overrides = dict(
-                    self.default_overrides,
-                    **anonymization_lookup
-                )
-
-                return
-
-            # First we need to figure out how old they are
-            if 'PatientAge' in self.dicom and 'StudyDate' in self.dicom:
-                self.dicom.PatientAge = self._patient_age()
-
-            if 'StudyDate' in self.dicom:
-                # Now set it so it is just the birth year but make it so that
-                # the proper age is returned when doing year math
-                birth_date = int(self.dicom.PatientBirthDate[4:])
-                study_date = int(self.dicom.StudyDate[4:])
-
-                # If the study was performed after their birthday this year
-                if study_date >= birth_date:
-                    new_birth_date = '%s0101' % self.dicom.PatientBirthDate[:4]
-                else:
-                    birth_year = self.dicom.PatientBirthDate[:4]
-                    new_birth_date = '%d0101' % (int(birth_year) + 1)
-
-                self.anonymization_lookup['PatientBirthDate'] = new_birth_date
-
-        # Update the override dictionary
-        self.overrides = dict(self.default_overrides, **anonymization_lookup)
-
-    def is_anonymous(self):
-        return self.default_overrides != self.overrides
 
     def sort(self, root, directory_fields, filename_string, test=False,
              rootdir=None, keep_original=True):
@@ -228,19 +187,31 @@ class Dicom:
 
 
 class Sorter(Thread):
-    def __init__(self, queue, output_directory, directory_format,
-                 filename_format, lookup=None, keep_filename=False,
-                 iterator=None, test=False, listener=None, total=None,
-                 root=None, series_first=False, keep_original=True):
-
-        self.directory_format = directory_format
-        self.filename_format = filename_format
+    def __init__(
+            self,
+            *,
+            queue,
+            target: str,
+            sort_order: list,
+            filename: str,
+            anonymization: dict = {},
+            keep_filename=False,
+            iterator=None,
+            test=False,
+            listener=None,
+            total=None,
+            root=None,
+            series_first=False,
+            keep_original=True
+    ):
+        self.directory_format = sort_order
+        self.filename = filename
         self.queue = queue
-        self.anonymization_lookup = lookup or dict()
+        self.anonymization_lookup = anonymization or dict()
         self.keep_filename = keep_filename
         self.series_first = series_first
         self.keep_original = keep_original
-        self.output_directory = output_directory
+        self.output_directory = target
         self.test = test
         self.iter = iterator
         self.root = root
@@ -265,119 +236,110 @@ class Sorter(Thread):
         dcm.set_anonymization_rules(self.anonymization_lookup)
         dcm.series_first = self.series_first
 
-        # Use the original filename for 3d recons
-        if self.keep_filename:
-            output_filename = os.path.basename(filename)
-        else:
-            output_filename = self.filename_format
-
         dcm.sort(
             self.output_directory,
             self.directory_format,
-            output_filename,
+            self.filename,
             test=self.test,
             rootdir=self.root,
             keep_original=self.keep_original
         )
-
-    def increment_counter(self):
-        if self.iter is None:
-            return
-
-        count = next(self.iter)
-
-        if self.is_gui is False:
-            return
-
-        event = events.CounterEvent(Count=count, total=self.total)
-        events.post_event(self.listener, event)
 
     def run(self):
         while True:
             try:
                 filename = self.queue.get_nowait()
                 self.sort_image(filename)
-                self.increment_counter()
             # TODO: Rescue any other errors and quarantine the files
             except Empty:
                 return
 
 
-class DicomSorter():
-    def __init__(self, pathname=None):
+class DicomSorter:
+    def __init__(
+            self,
+            *,
+            source: str = None,
+            target: str,
+            filename: str = '%(ImageType)s_(%(InstanceNumber)04d)%(FileExtension)s',
+            keep_filename: bool = False,
+            series_first: bool = False,
+            keep_original: bool = True,
+            sort_order: list = ['SeriesDescription'],
+            anonymization: dict = {
+                'PatientName': 'PatientID',
+                'PatientBirthDate': ''
+            }
+    ):
+        """
+
+        param source: source to raw dicom files to be sorted
+        type: str
+
+        param filename: parameterized string to rename files. Use `None` to keep original file name.
+        type: str
+
+        param keep_filename: to use the original file name instead of renaming. TO BE REMOVED!!
+
+        param series_first: to use the SeriesDescription field as the first sorting field. TO BE REMOVED!!
+
+        param keep_original: to keep the original dicom files
+
+        param sort_order: ordered list of fields to use when ordering files. Each field will add a child directory to
+                            the immediate ancestor.
+
+        param anonymization: anonymize fields as key-value pairs. Can use templating to replace with other fields.
+
+        """
         # Use current directory by default
-        if not pathname:
-            pathname = [os.getcwd(), ]
+        if not source:
+            source = [os.getcwd(), ]
 
-        if not isinstance(pathname, list):
-            pathname = [pathname, ]
+        if not isinstance(source, list):
+            source = [source, ]
 
-        self.pathname = pathname
+        self.source = source
+        self.target = target
+        self.filename = filename
+        self.keep_filename = keep_filename
+        self.series_first = series_first
+        self.keep_original = keep_original
+        self.sort_order = sort_order
 
-        self.folders = []
-        self.filename = '%(ImageType)s (%(InstanceNumber)04d)%(FileExtension)s'
+        if not isinstance(anonymization, dict):
+            raise Exception('Anon rules must be a dictionary')
+        self.anonymization = anonymization
 
         self.queue = Queue()
-
         self.sorters = list()
-
-        # Don't anonymize by default
-        self.anonymization_lookup = dict()
-
-        self.keep_filename = False
-        self.series_first = False
-        self.keep_original = True
-
-    def is_sorting(self):
-        for sorter in self.sorters:
-            if sorter.is_alive():
-                return True
-
-        return False
-
-    def set_anonymization_rules(self, anonymization_lookup):
-        # Appends the rules to the overrides so that we can alter them
-        if not isinstance(anonymization_lookup, dict):
-            raise Exception('Anon rules must be a dictionary')
-
-        self.anonymization_lookup = anonymization_lookup
-
-    def folder_format(self):
-        # Check to see if we are using the origin directory structure
-        if self.folders is None:
-            return None
-
-        # Make a local copy
-        folder_list = self.folders[:]
-
-        return folder_list
 
     def sort(self, output_directory, test=False, listener=None):
         # This should be moved to a worker thread
-        for path in self.pathname:
+        for path in self.source:
             for root, _, files in os.walk(path):
                 for filename in files:
                     self.queue.put(os.path.join(root, filename))
-
         number_of_files = self.queue.qsize()
-        dir_format = self.folder_format()
-
-        self.sorters = list()
-
         iterator = itertools.count(1)
 
         for _ in range(min(THREAD_COUNT, number_of_files)):
             sorter = Sorter(
-                self.queue, output_directory, dir_format, self.filename,
-                self.anonymization_lookup, self.keep_filename,
-                iterator=iterator, test=test, listener=listener,
-                total=number_of_files, root=self.pathname,
-                series_first=self.series_first,
+                queue=self.queue,
+                target=self.target,
+                sort_order=self.sort_order,
+                filename=self.filename,
+                anonymization=self.anonymization,
+                iterator=iterator,
+                test=test,
+                listener=listener,
+                total=number_of_files,
+                root=self.source,
                 keep_original=self.keep_original
             )
 
             self.sorters.append(sorter)
 
+    # todo: change to 'check_for_dicoms'
     def available_fields(self):
         for path in self.pathname:
             for root, dirs, files in os.walk(path):
