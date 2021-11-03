@@ -33,6 +33,7 @@ class DicomSorter:
                 file_queue.put(os.path.join(root, filename))
 
         number_of_files = file_queue.qsize()
+        print(number_of_files)
 
         for _ in range(min(THREAD_COUNT, number_of_files)):
             sorter = Sorter(
@@ -137,13 +138,17 @@ class Dicom:
         return extension
 
     def _series_description(self):
-        out = 'Series%s_%04d' % (self.dcm.SeriesDescription, self.dcm.SeriesNumber)
+        out = '%s_Series_%04d' % (self.dcm.SeriesDescription, self.dcm.SeriesNumber)
 
         # Strip so we don't have any leading/trailing spaces
         return out.strip()
 
     def _build_sorted_path(self) -> str:
         new_path = self.target
+        if 'SeriesDescription' in self.sort_order:
+            # move SeriesDescription to end of sort order
+            self.sort_order.remove('SeriesDescription')
+        self.sort_order.append('SeriesDescription')
         for item in self.sort_order:
             if item == 'SeriesDescription':
                 value = self._series_description()
@@ -179,7 +184,7 @@ class Dicom:
         max_rep = len(re.findall(r'%', format_string))
         rep = 0
 
-        # this regex will scoop out the parameter from the string: (?<=%\().+?(?=\))
+        # look for an instance of '%' and capture everything in the parenthesis
         while re.search(r'%(.*)', format_string) and rep < max_rep:
             format_string = format_string % repobj
             rep = rep + 1
