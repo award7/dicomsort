@@ -15,7 +15,7 @@ class DicomSorter:
             source: str,
             target: str,
             filename: str = 'Image_(%(InstanceNumber)04d)',
-            sort_order: list = ['ProtocolName', 'PatientName'],
+            sort_order: list = ['PatientName'],
             anonymization: dict = {},
             keep_original=True
     ):
@@ -33,7 +33,6 @@ class DicomSorter:
                 file_queue.put(os.path.join(root, filename))
 
         number_of_files = file_queue.qsize()
-        print(number_of_files)
 
         for _ in range(min(THREAD_COUNT, number_of_files)):
             sorter = Sorter(

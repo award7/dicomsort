@@ -45,7 +45,7 @@ the attribute name in `printf`-style string. Default = 'Image_(%(InstanceNumber)
 
 `sort_order` (List[str]): the order in which to sort the raw DICOM files. Can be any DICOM attribute. Note: 
 'SeriesDescription' will always be the final sorting criteria to avoid ambiguity in the sorting process and therefore it 
-is not necessary to specify. Default = ['ProtocolName', 'PatientName'].
+is not necessary to specify. Default = ['PatientName'].
 
 `anonymization` (dict): key-value pairs of DICOM attributes and the new values to apply to the sorted files. 
 Default = None.
