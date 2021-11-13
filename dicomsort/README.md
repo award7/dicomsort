@@ -52,3 +52,5 @@ Default = None.
 
 `keep_original` (bool): specification as to deleting the original, unsorted DICOM files in the `source` directory. 
 Default = False. 
+
+`ignore` (dict): key-value pairs of DICOM attributes to ignore with the given value. Default = None.

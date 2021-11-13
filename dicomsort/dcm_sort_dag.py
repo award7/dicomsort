@@ -27,8 +27,15 @@ default_args = {
 }
 with DAG('DICOM_Sort', default_args=default_args, schedule_interval=None, start_date=datetime(2021, 8, 1), catchup=False) as DAG:
     dicom_sort = DicomSortOperator(
-            task_id='dicom-sort',
-            source='/media/schragelab/CDROM/a',
-            target='/mnt/hgfs/bucket/asl/raw'
-        )
-    
+        task_id='dicom-sort',
+        source='/media/schragelab/CDROM/a',
+        target='/mnt/hgfs/bucket/asl/raw',
+        ignore_all_except={
+            'SeriesDescription': [
+                '3D ASL',
+                'UW eASL',
+                'Ax T1',
+                'mADNI'
+            ]
+        }
+    )

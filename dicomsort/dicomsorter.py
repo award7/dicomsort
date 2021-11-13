@@ -4,6 +4,7 @@ import pydicom
 from queue import Empty, Queue
 from threading import Thread
 from pydicom.errors import InvalidDicomError
+from typing import Optional
 
 THREAD_COUNT = 2
 
@@ -14,17 +15,23 @@ class DicomSorter:
             *,
             source: str,
             target: str,
-            filename: str = 'Image_(%(InstanceNumber)04d)',
-            sort_order: list = ['PatientName'],
-            anonymization: dict = {},
-            keep_original=True
+            filename: Optional[str] = None,
+            sort_order: Optional[list] = None,
+            anonymization: Optional[dict] = None,
+            keep_original=True,
+            ignore: Optional[dict] = None,
+            ignore_all_except: Optional[dict] = None
     ):
         self.source = source
         self.target = target
-        self.sort_order = sort_order
-        self.filename = filename
+        if not filename:
+            self.filename = 'Image_(%(InstanceNumber)04d)'
+        if not sort_order:
+            self.sort_order = ['PatientName']
         self.anonymization = anonymization
         self.keep_original = keep_original
+        self.ignore = ignore
+        self.ignore_all_except = ignore_all_except
 
     def sort(self) -> None:
         file_queue = Queue()
@@ -43,6 +50,7 @@ class DicomSorter:
                 sort_order=self.sort_order,
                 anonymization=self.anonymization,
                 keep_original=self.keep_original
+
             )
             sorter.run()
 
@@ -54,10 +62,11 @@ class Sorter(Thread):
             queue: Queue,
             source: str,
             target: str,
-            sort_order: list,
-            filename: str,
-            anonymization: dict,
-            keep_original: bool,
+            filename: Optional[str] = None,
+            sort_order: Optional[list] = None,
+            anonymization: Optional[dict] = None,
+            keep_original=True,
+            ignore: Optional[dict] = None,
     ):
         self.queue = queue
         self.source = source
@@ -66,6 +75,7 @@ class Sorter(Thread):
         self.filename = filename
         self.anonymization = anonymization
         self.keep_original = keep_original
+        self.ignore = ignore
 
         Thread.__init__(self)
         self.start()
@@ -81,7 +91,8 @@ class Sorter(Thread):
                     filename=self.filename,
                     sort_order=self.sort_order,
                     anonymization=self.anonymization,
-                    keep_original=self.keep_original
+                    keep_original=self.keep_original,
+                    ignore=self.ignore
                 )
             # TODO: Rescue any other errors and quarantine the files
             except Empty:
@@ -95,10 +106,12 @@ class Dicom:
             source: str,
             target: str,
             raw_file: str,
-            filename: str,
-            sort_order: list,
-            anonymization: dict,
-            keep_original: bool
+            filename: Optional[str] = None,
+            sort_order: Optional[list] = None,
+            anonymization: Optional[dict] = None,
+            keep_original=True,
+            ignore: Optional[dict] = None,
+            ignore_all_except: Optional[dict] = None
     ) -> None:
         """
         Takes a dicom filename in and returns instance that can be used to sort
@@ -110,6 +123,8 @@ class Dicom:
         self.sort_order = sort_order
         self.anonymization = anonymization
         self.keep_original = keep_original
+        self.ignore = ignore
+        self.ignore_all_except = ignore_all_except
 
         # Load the DICOM object
         try:
@@ -117,7 +132,17 @@ class Dicom:
         except InvalidDicomError:
             return
 
-        self._anonymize()
+        try:
+            # ignore_all_except overrides ignore by simply skipping the check to _ignore_checker()
+            if self.ignore_all_except:
+                self._ignore_all_except_checker()
+            elif self.ignore:
+                self._ignore_checker()
+        except ValueError:
+            return
+
+        if self.anonymization:
+            self._anonymize()
         self.sort()
 
         # remove original file if indicated
@@ -191,3 +216,30 @@ class Dicom:
         regex = re.compile(r'\s')
         cleaned_string = re.sub(regex, '_', format_string)
         return cleaned_string
+
+    def _ignore_checker(self) -> None:
+        # raise exception if found to match
+        try:
+            for key, val in self.ignore.items():
+                dicom_attribute = getattr(self.dcm, key)
+                if val == dicom_attribute:
+                    raise ValueError
+        except AttributeError:
+            # to catch if self.ignore is None
+            pass
+
+    def _ignore_all_except_checker(self) -> None:
+        # raise exception if not found to match (inversion of _ignore_checker)
+        for key, val in self.ignore_all_except.items():
+            dicom_attribute = str(getattr(self.dcm, key))
+            if isinstance(val, str):
+                if val.lower() in dicom_attribute.lower():
+                    return
+                else:
+                    raise ValueError
+            elif isinstance(val, list):
+                if any([item for item in val if item.lower() in dicom_attribute.lower()]):
+                    return
+                else:
+                    raise ValueError
+
